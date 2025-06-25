@@ -59,17 +59,30 @@ fn get_source_index(x: u32, y: u32, z: u32, direction: u32) -> u32 {
     let ny = i32(y) - c[1];
     let nz = i32(z) - c[2];
     
-    // Handle boundary conditions
+    // Handle boundary conditions with proper clamping
     var new_x = nx;
     var new_y = ny;
     var new_z = nz;
     
-    if (new_x < 0) { new_x = 0; }
-    if (new_x >= i32(config.domain_size.x)) { new_x = i32(config.domain_size.x) - 1; }
-    if (new_y < 0) { new_y = 0; }
-    if (new_y >= i32(config.domain_size.y)) { new_y = i32(config.domain_size.y) - 1; }
-    if (new_z < 0) { new_z = 0; }
-    if (new_z >= i32(config.domain_size.z)) { new_z = i32(config.domain_size.z) - 1; }
+    // Apply periodic or reflective boundary conditions where appropriate
+    if (new_x < 0) { 
+        new_x = 0; // Reflective at inlet
+    }
+    if (new_x >= i32(config.domain_size.x)) { 
+        new_x = i32(config.domain_size.x) - 1; // Reflective at outlet
+    }
+    if (new_y < 0) { 
+        new_y = 0; // Reflective at walls
+    }
+    if (new_y >= i32(config.domain_size.y)) { 
+        new_y = i32(config.domain_size.y) - 1; // Reflective at walls
+    }
+    if (new_z < 0) { 
+        new_z = 0; // Reflective at walls
+    }
+    if (new_z >= i32(config.domain_size.z)) { 
+        new_z = i32(config.domain_size.z) - 1; // Reflective at walls
+    }
     
     return u32(new_x) + u32(new_y) * config.domain_size.x + u32(new_z) * config.domain_size.x * config.domain_size.y;
 }

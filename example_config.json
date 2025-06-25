@@ -20,7 +20,7 @@
   },
   "output": {
     "output_directory": "./output",
-    "output_frequency": 50,
+    "output_frequency": 10,
     "output_format": "vtk"
   }
 }

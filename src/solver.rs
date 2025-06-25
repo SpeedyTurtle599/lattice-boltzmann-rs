@@ -46,9 +46,15 @@ impl LBMSolver {
                         0 // Fluid
                     };
                     
+                    // Initialize velocity based on node type
                     let velocity = if node_type == 2 {
+                        // Inlet velocity
                         config.physics.inlet_velocity
+                    } else if node_type == 0 {
+                        // Fluid nodes start with small initial velocity to seed the flow
+                        [config.physics.inlet_velocity[0] * 0.1, 0.0, 0.0]
                     } else {
+                        // Solid and outlet nodes
                         [0.0; 3]
                     };
                     
@@ -59,12 +65,22 @@ impl LBMSolver {
                     );
                     
                     lattice.push(point);
+                    
+                    // Debug output for some key nodes
+                    if (i == 0 && j == config.domain.ny / 2 && k == config.domain.nz / 2) ||
+                       (i == config.domain.nx / 2 && j == config.domain.ny / 2 && k == config.domain.nz / 2) {
+                        println!("Node ({}, {}, {}): type={}, vel=[{:.4}, {:.4}, {:.4}]", 
+                                i, j, k, node_type, velocity[0], velocity[1], velocity[2]);
+                    }
                 }
             }
         }
         
         // Upload initial data to GPU
         gpu_context.upload_lattice_data(&lattice);
+        
+        // Write geometry file for visualization debugging
+        Self::write_geometry_file(&geometry, &config)?;
         
         Ok(Self {
             config,
@@ -195,5 +211,63 @@ impl LBMSolver {
     
     pub fn get_geometry(&self) -> &Geometry {
         &self.geometry
+    }
+    
+    fn write_geometry_file(geometry: &Geometry, config: &Config) -> Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+        
+        let filename = format!("{}/geometry.vtk", config.output.output_directory);
+        let mut file = File::create(&filename)?;
+        
+        let nx = config.domain.nx;
+        let ny = config.domain.ny;
+        let nz = config.domain.nz;
+        
+        // Write VTK header for structured grid
+        writeln!(file, "# vtk DataFile Version 3.0")?;
+        writeln!(file, "LBM Geometry")?;
+        writeln!(file, "ASCII")?;
+        writeln!(file, "DATASET STRUCTURED_GRID")?;
+        writeln!(file, "DIMENSIONS {} {} {}", nx, ny, nz)?;
+        
+        // Write points
+        writeln!(file, "POINTS {} float", nx * ny * nz)?;
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let x = i as f32 * config.domain.dx;
+                    let y = j as f32 * config.domain.dy;
+                    let z = k as f32 * config.domain.dz;
+                    writeln!(file, "{} {} {}", x, y, z)?;
+                }
+            }
+        }
+        
+        // Write point data
+        writeln!(file, "POINT_DATA {}", nx * ny * nz)?;
+        
+        // Node classification
+        writeln!(file, "SCALARS NodeClassification float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let value = if geometry.is_solid(i, j, k) {
+                        1.0 // Solid
+                    } else if geometry.is_inlet(i, j, k) {
+                        0.5 // Inlet
+                    } else if geometry.is_outlet(i, j, k) {
+                        0.25 // Outlet
+                    } else {
+                        0.0 // Fluid
+                    };
+                    writeln!(file, "{}", value)?;
+                }
+            }
+        }
+        
+        info!("Wrote geometry file: {}", filename);
+        Ok(())
     }
 }

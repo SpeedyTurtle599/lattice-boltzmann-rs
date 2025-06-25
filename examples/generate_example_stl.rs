@@ -78,13 +78,13 @@ fn main() -> Result<()> {
     // Generate an example cylinder STL file
     // Domain: 100x50x50 grid with dx=dy=dz=0.01 => 1.0m x 0.5m x 0.5m physical domain
     // Place cylinder at x=0.4m (40% downstream), centered in y-z directions
-    // Cylinder: radius 0.05m (5 grid cells), height 0.2m (20 grid cells) 
-    // This ensures cylinder doesn't interfere with inlet (x=0) or outlet (x=1.0)
-    generate_cylinder_stl("example_cylinder.stl", 0.05, 0.2, [0.4, 0.25, 0.25])?;
+    // Cylinder: radius 0.08m (8 grid cells), height 0.4m (40 grid cells) 
+    // This ensures cylinder spans most of the z-direction and creates a visible obstruction
+    generate_cylinder_stl("example_cylinder.stl", 0.08, 0.4, [0.4, 0.25, 0.25])?;
     
     println!("Generated example_cylinder.stl");
     println!("Domain: 1.0m x 0.5m x 0.5m (100x50x50 grid cells)");
-    println!("Cylinder: radius=0.05m, height=0.2m, center=(0.4, 0.25, 0.25)");
+    println!("Cylinder: radius=0.08m, height=0.4m, center=(0.4, 0.25, 0.25)");
     println!("Inlet: x=0 plane, Outlet: x=1.0 plane");
     println!("Inlet velocity: 0.1 m/s in +x direction");
     

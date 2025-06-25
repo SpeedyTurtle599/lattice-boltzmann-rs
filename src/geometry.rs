@@ -114,23 +114,42 @@ impl Geometry {
         let k_min = ((min_z / domain.dz).floor() as i32).max(0).min(domain.nz as i32 - 1) as usize;
         let k_max = ((max_z / domain.dz).ceil() as i32).max(0).min(domain.nz as i32 - 1) as usize;
         
+        // Use multiple sampling points per voxel for better accuracy
+        let samples_per_axis = 3;
+        let total_samples = samples_per_axis * samples_per_axis * samples_per_axis;
+        
         // Sample each voxel in the bounding box
         for i in i_min..=i_max {
             for j in j_min..=j_max {
                 for k in k_min..=k_max {
-                    // Test voxel center point
-                    let point = Point3::new(
-                        (i as f32 + 0.5) * domain.dx,
-                        (j as f32 + 0.5) * domain.dy,
-                        (k as f32 + 0.5) * domain.dz,
-                    );
+                    let mut inside_count = 0;
                     
-                    // Check if point is inside the triangle (with some tolerance for surface voxels)
-                    let distance = Self::point_triangle_distance(&point, vertices);
-                    let voxel_size = (domain.dx.min(domain.dy).min(domain.dz)) * 0.5;
+                    // Multiple sampling points within each voxel
+                    for si in 0..samples_per_axis {
+                        for sj in 0..samples_per_axis {
+                            for sk in 0..samples_per_axis {
+                                let offset_x = (si as f32 + 0.5) / samples_per_axis as f32;
+                                let offset_y = (sj as f32 + 0.5) / samples_per_axis as f32;
+                                let offset_z = (sk as f32 + 0.5) / samples_per_axis as f32;
+                                
+                                let point = Point3::new(
+                                    (i as f32 + offset_x) * domain.dx,
+                                    (j as f32 + offset_y) * domain.dy,
+                                    (k as f32 + offset_z) * domain.dz,
+                                );
+                                
+                                // Check if point is inside the geometry using better method
+                                if Self::point_inside_triangle_volume(&point, vertices, domain) {
+                                    inside_count += 1;
+                                }
+                            }
+                        }
+                    }
                     
-                    if distance < voxel_size {
+                    // Mark as solid if majority of sample points are inside
+                    if inside_count > total_samples / 2 {
                         solid_nodes.insert((i, j, k));
+                        println!("Marked solid node at ({}, {}, {})", i, j, k);
                         
                         // Mark neighboring nodes as boundary candidates
                         for di in -1i32..=1 {
@@ -154,6 +173,15 @@ impl Geometry {
                 }
             }
         }
+    }
+    
+    fn point_inside_triangle_volume(point: &Point3<f32>, triangle: &[Point3<f32>; 3], domain: &DomainConfig) -> bool {
+        // First check distance to triangle plane
+        let distance = Self::point_triangle_distance(point, triangle);
+        let thickness_threshold = (domain.dx.min(domain.dy).min(domain.dz)) * 0.8;
+        
+        // If the point is close to the triangle surface, consider it inside
+        distance < thickness_threshold
     }
     
     fn point_triangle_distance(point: &Point3<f32>, triangle: &[Point3<f32>; 3]) -> f32 {

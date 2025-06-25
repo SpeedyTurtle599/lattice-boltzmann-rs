@@ -106,6 +106,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Handle boundary conditions based on node type
     switch (node_type) {
         case 1u: { // Solid node - bounce-back
+            // Full bounce-back boundary condition
             for (var i = 0u; i < Q; i++) {
                 let opposite = OPPOSITE[i];
                 lattice[idx].f[i] = lattice[idx].f[opposite];
@@ -114,15 +115,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             lattice[idx].density = 1.0;
         }
         case 3u: { // Outlet - zero gradient (Neumann BC)
-            // Copy from neighboring fluid node (extrapolation)
+            // Copy from neighboring fluid node in the flow direction
             if (x > 0u) {
                 let neighbor_idx = (x - 1u) + y * config.domain_size.x + z * config.domain_size.x * config.domain_size.y;
+                // Only copy from fluid nodes
                 if (lattice[neighbor_idx].node_type == 0u) {
                     for (var i = 0u; i < Q; i++) {
                         lattice[idx].f[i] = lattice[neighbor_idx].f[i];
                     }
                     lattice[idx].density = lattice[neighbor_idx].density;
                     lattice[idx].velocity = lattice[neighbor_idx].velocity;
+                } else {
+                    // If no valid neighbor, use outflow conditions
+                    for (var i = 0u; i < Q; i++) {
+                        lattice[idx].f[i] = equilibrium_distribution(i, 1.0, array<f32, 3>(0.1, 0.0, 0.0));
+                    }
+                    lattice[idx].density = 1.0;
+                    lattice[idx].velocity = array<f32, 3>(0.1, 0.0, 0.0);
                 }
             }
         }

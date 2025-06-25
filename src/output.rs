@@ -74,6 +74,20 @@ impl VTKWriter {
             writeln!(file, "{}", point.node_type as f32)?;
         }
         
+        // Geometry indicator (useful for visualizing solid regions)
+        writeln!(file, "SCALARS GeometryType float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for point in lattice {
+            let value = match point.node_type {
+                0 => 0.0,   // Fluid - blue
+                1 => 1.0,   // Solid - red  
+                2 => 0.5,   // Inlet - green
+                3 => 0.25,  // Outlet - yellow
+                _ => -1.0,  // Unknown - black
+            };
+            writeln!(file, "{}", value)?;
+        }
+        
         // Pressure (from density)
         writeln!(file, "SCALARS Pressure float 1")?;
         writeln!(file, "LOOKUP_TABLE default")?;

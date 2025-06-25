@@ -162,20 +162,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             temp[idx].density = lattice[idx].density;
             temp[idx].velocity = lattice[idx].velocity;
         }
-        case 2u: { // Inlet nodes - prescribed velocity
+        case 2u: { // Inlet nodes - prescribed velocity with relaxation
             let inlet_vel = array<f32, 3>(
                 config.inlet_velocity.x,
                 config.inlet_velocity.y,
                 config.inlet_velocity.z
             );
             
-            // Set equilibrium distribution at inlet
+            // Calculate current macroscopic quantities first
+            calculate_macroscopic(idx);
+            
+            // Apply relaxation for smoother transition
+            let relax_factor = 0.9; // Strong enforcement but not abrupt
+            let relaxed_vel = array<f32, 3>(
+                relax_factor * inlet_vel[0] + (1.0 - relax_factor) * lattice[idx].velocity[0],
+                relax_factor * inlet_vel[1] + (1.0 - relax_factor) * lattice[idx].velocity[1],
+                relax_factor * inlet_vel[2] + (1.0 - relax_factor) * lattice[idx].velocity[2]
+            );
+            
+            // Use relaxed density too for stability
+            let relaxed_density = relax_factor * config.density + (1.0 - relax_factor) * lattice[idx].density;
+            
+            // Set equilibrium distribution at inlet with relaxed values
             for (var i = 0u; i < Q; i++) {
-                temp[idx].f[i] = equilibrium_distribution(i, config.density, inlet_vel);
+                temp[idx].f[i] = equilibrium_distribution(i, relaxed_density, relaxed_vel);
             }
             
-            temp[idx].density = config.density;
-            temp[idx].velocity = inlet_vel;
+            temp[idx].density = relaxed_density;
+            temp[idx].velocity = relaxed_vel;
         }
         default: { // Solid, outlet, and other nodes - copy unchanged
             for (var i = 0u; i < Q; i++) {

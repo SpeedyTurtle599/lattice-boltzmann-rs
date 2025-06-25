@@ -351,10 +351,11 @@ impl GPUContext {
             label: Some("LBM Step Encoder"),
         });
         
-        let workgroup_size = 8;
-        let dispatch_x = (self.nx + workgroup_size - 1) / workgroup_size;
-        let dispatch_y = (self.ny + workgroup_size - 1) / workgroup_size;
-        let dispatch_z = (self.nz + workgroup_size - 1) / workgroup_size;
+        // Compute workgroup dispatch - note that z dimension uses workgroup_size=1 in shaders
+        let workgroup_size_xy = 8;
+        let dispatch_x = (self.nx + workgroup_size_xy - 1) / workgroup_size_xy;
+        let dispatch_y = (self.ny + workgroup_size_xy - 1) / workgroup_size_xy;
+        let dispatch_z = self.nz; // Each workgroup handles 1 z-slice
         
         // Collision step - read from lattice_buffer, write to temp_buffer
         {
