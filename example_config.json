@@ -14,13 +14,13 @@
     "viscosity": null
   },
   "simulation": {
-    "max_iterations": 10000,
+    "max_iterations": 500,
     "convergence_tolerance": 1e-6,
     "tau": null
   },
   "output": {
     "output_directory": "./output",
-    "output_frequency": 100,
+    "output_frequency": 50,
     "output_format": "vtk"
   }
 }

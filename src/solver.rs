@@ -119,6 +119,40 @@ impl LBMSolver {
         // Read data back from GPU
         self.lattice = self.gpu_context.read_lattice_data().await?;
         
+        // Calculate flow statistics for diagnostics
+        let mut max_velocity = 0.0;
+        let mut avg_velocity = 0.0;
+        let mut fluid_count = 0;
+        let mut inlet_velocity_check = 0.0;
+        let mut inlet_count = 0;
+        
+        for point in &self.lattice {
+            if point.node_type == 0 { // Fluid nodes
+                let v_mag = (point.velocity[0].powi(2) + 
+                           point.velocity[1].powi(2) + 
+                           point.velocity[2].powi(2)).sqrt();
+                max_velocity = f32::max(max_velocity, v_mag);
+                avg_velocity += v_mag;
+                fluid_count += 1;
+            } else if point.node_type == 2 { // Inlet nodes
+                let v_mag = (point.velocity[0].powi(2) + 
+                           point.velocity[1].powi(2) + 
+                           point.velocity[2].powi(2)).sqrt();
+                inlet_velocity_check += v_mag;
+                inlet_count += 1;
+            }
+        }
+        
+        if fluid_count > 0 {
+            avg_velocity /= fluid_count as f32;
+        }
+        if inlet_count > 0 {
+            inlet_velocity_check /= inlet_count as f32;
+        }
+        
+        info!("Iteration {}: max_vel={:.6}, avg_vel={:.6}, inlet_vel={:.6} ({} inlet nodes)", 
+              self.iteration, max_velocity, avg_velocity, inlet_velocity_check, inlet_count);
+        
         // Write VTK file
         let filename = format!("{}/output_{:06}.{}", 
                               self.config.output.output_directory,

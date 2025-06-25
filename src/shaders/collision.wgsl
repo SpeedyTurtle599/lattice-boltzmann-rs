@@ -76,10 +76,22 @@ fn equilibrium_distribution(direction: u32, density: f32, velocity: array<f32, 3
     // Velocity magnitude squared
     let u2 = velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2];
     
+    // Ensure inputs are valid
+    if (density <= 0.0 || abs(u2) > 1.0) {
+        return weight * 1.0; // Return a safe default
+    }
+    
     // Equilibrium distribution function
-    return weight * density * (1.0 + cu / CS2 + 
+    let eq = weight * density * (1.0 + cu / CS2 + 
                               cu * cu / (2.0 * CS2 * CS2) - 
                               u2 / (2.0 * CS2));
+    
+    // Ensure result is valid
+    if (eq < 0.0 || eq != eq) { // Check for NaN
+        return weight * density / 27.0; // Return uniform distribution
+    }
+    
+    return eq;
 }
 
 fn calculate_macroscopic(idx: u32) {
@@ -98,10 +110,23 @@ fn calculate_macroscopic(idx: u32) {
         velocity[2] += lattice[idx].f[i] * f32(c[2]);
     }
     
-    if (density > 1e-10) {
+    // Ensure density is valid
+    if (density <= 1e-10 || density != density) { // Check for NaN
+        density = 1.0;
+        velocity = array<f32, 3>(0.0, 0.0, 0.0);
+    } else {
         velocity[0] /= density;
         velocity[1] /= density;
         velocity[2] /= density;
+        
+        // Clamp velocity to reasonable range
+        let vel_mag = sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+        if (vel_mag > 0.3) { // Max Mach number around 0.3
+            let scale = 0.3 / vel_mag;
+            velocity[0] *= scale;
+            velocity[1] *= scale;
+            velocity[2] *= scale;
+        }
     }
     
     lattice[idx].density = density;
@@ -120,19 +145,48 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     let idx = x + y * config.domain_size.x + z * config.domain_size.x * config.domain_size.y;
     
-    // Only process fluid nodes
-    if (lattice[idx].node_type != 0u) {
-        return;
+    // Handle different node types
+    switch (lattice[idx].node_type) {
+        case 0u: { // Fluid nodes - BGK collision
+            // Calculate macroscopic quantities
+            calculate_macroscopic(idx);
+            
+            // BGK collision
+            let omega = 1.0 / config.tau;
+            
+            for (var i = 0u; i < Q; i++) {
+                let f_eq = equilibrium_distribution(i, lattice[idx].density, lattice[idx].velocity);
+                temp[idx].f[i] = lattice[idx].f[i] + omega * (f_eq - lattice[idx].f[i]);
+            }
+            
+            temp[idx].density = lattice[idx].density;
+            temp[idx].velocity = lattice[idx].velocity;
+        }
+        case 2u: { // Inlet nodes - prescribed velocity
+            let inlet_vel = array<f32, 3>(
+                config.inlet_velocity.x,
+                config.inlet_velocity.y,
+                config.inlet_velocity.z
+            );
+            
+            // Set equilibrium distribution at inlet
+            for (var i = 0u; i < Q; i++) {
+                temp[idx].f[i] = equilibrium_distribution(i, config.density, inlet_vel);
+            }
+            
+            temp[idx].density = config.density;
+            temp[idx].velocity = inlet_vel;
+        }
+        default: { // Solid, outlet, and other nodes - copy unchanged
+            for (var i = 0u; i < Q; i++) {
+                temp[idx].f[i] = lattice[idx].f[i];
+            }
+            temp[idx].density = lattice[idx].density;
+            temp[idx].velocity = lattice[idx].velocity;
+        }
     }
     
-    // Calculate macroscopic quantities
-    calculate_macroscopic(idx);
-    
-    // BGK collision
-    let omega = 1.0 / config.tau;
-    
-    for (var i = 0u; i < Q; i++) {
-        let f_eq = equilibrium_distribution(i, lattice[idx].density, lattice[idx].velocity);
-        lattice[idx].f[i] += omega * (f_eq - lattice[idx].f[i]);
-    }
+    // Copy node type and padding
+    temp[idx].node_type = lattice[idx].node_type;
+    temp[idx].padding = lattice[idx].padding;
 }

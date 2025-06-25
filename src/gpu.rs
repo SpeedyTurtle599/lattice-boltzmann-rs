@@ -356,7 +356,7 @@ impl GPUContext {
         let dispatch_y = (self.ny + workgroup_size - 1) / workgroup_size;
         let dispatch_z = (self.nz + workgroup_size - 1) / workgroup_size;
         
-        // Collision step
+        // Collision step - read from lattice_buffer, write to temp_buffer
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Collision Pass"),
@@ -367,7 +367,10 @@ impl GPUContext {
             compute_pass.dispatch_workgroups(dispatch_x, dispatch_y, dispatch_z);
         }
         
-        // Streaming step
+        // Insert memory barrier before streaming
+        encoder.insert_debug_marker("Memory barrier after collision");
+        
+        // Streaming step - read from temp_buffer, write to lattice_buffer
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Streaming Pass"),
@@ -378,7 +381,10 @@ impl GPUContext {
             compute_pass.dispatch_workgroups(dispatch_x, dispatch_y, dispatch_z);
         }
         
-        // Boundary conditions
+        // Insert memory barrier before boundary conditions
+        encoder.insert_debug_marker("Memory barrier after streaming");
+        
+        // Boundary conditions - modify lattice_buffer in place
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Boundary Pass"),
@@ -390,6 +396,9 @@ impl GPUContext {
         }
         
         self.queue.submit(std::iter::once(encoder.finish()));
+        
+        // Wait for GPU operations to complete this time step
+        self.device.poll(wgpu::Maintain::Wait);
     }
 }
 

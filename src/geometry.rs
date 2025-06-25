@@ -48,23 +48,40 @@ impl Geometry {
         let mut inlet_nodes = HashSet::new();
         let mut outlet_nodes = HashSet::new();
         
-        // Inlet at x=0 plane
+        // Inlet at x=0 plane - force ALL these to be inlet nodes
         for j in 0..domain.ny {
             for k in 0..domain.nz {
-                if fluid_nodes.contains(&(0, j, k)) {
-                    inlet_nodes.insert((0, j, k));
+                let node = (0, j, k);
+                // Remove from solid nodes if accidentally marked
+                solid_nodes.remove(&node);
+                // Ensure it's in fluid nodes
+                fluid_nodes.insert(node);
+                // Add to inlet
+                inlet_nodes.insert(node);
+                
+                // Log inlet node assignment for debugging
+                if j == domain.ny / 2 && k == domain.nz / 2 {
+                    println!("Assigned inlet node at center: ({}, {}, {})", 0, j, k);
                 }
             }
         }
         
-        // Outlet at x=nx-1 plane
+        // Outlet at x=nx-1 plane - force ALL these to be outlet nodes
         for j in 0..domain.ny {
             for k in 0..domain.nz {
-                if fluid_nodes.contains(&(domain.nx - 1, j, k)) {
-                    outlet_nodes.insert((domain.nx - 1, j, k));
-                }
+                let node = (domain.nx - 1, j, k);
+                // Remove from solid nodes if accidentally marked
+                solid_nodes.remove(&node);
+                // Ensure it's in fluid nodes
+                fluid_nodes.insert(node);
+                // Add to outlet
+                outlet_nodes.insert(node);
             }
         }
+        
+        // Log geometry statistics
+        println!("Geometry loaded: {} solid, {} fluid, {} inlet, {} outlet nodes", 
+                solid_nodes.len(), fluid_nodes.len(), inlet_nodes.len(), outlet_nodes.len());
         
         Ok(Geometry {
             solid_nodes,
@@ -81,7 +98,7 @@ impl Geometry {
         solid_nodes: &mut HashSet<(usize, usize, usize)>,
         boundary_nodes: &mut HashSet<(usize, usize, usize)>,
     ) {
-        // Simple voxelization: mark nodes within triangle bounding box
+        // Get triangle bounding box
         let min_x = vertices.iter().map(|v| v.x).fold(f32::INFINITY, f32::min);
         let max_x = vertices.iter().map(|v| v.x).fold(f32::NEG_INFINITY, f32::max);
         let min_y = vertices.iter().map(|v| v.y).fold(f32::INFINITY, f32::min);
@@ -89,37 +106,46 @@ impl Geometry {
         let min_z = vertices.iter().map(|v| v.z).fold(f32::INFINITY, f32::min);
         let max_z = vertices.iter().map(|v| v.z).fold(f32::NEG_INFINITY, f32::max);
         
-        let i_min = ((min_x / domain.dx) as usize).max(0).min(domain.nx - 1);
-        let i_max = ((max_x / domain.dx) as usize).max(0).min(domain.nx - 1);
-        let j_min = ((min_y / domain.dy) as usize).max(0).min(domain.ny - 1);
-        let j_max = ((max_y / domain.dy) as usize).max(0).min(domain.ny - 1);
-        let k_min = ((min_z / domain.dz) as usize).max(0).min(domain.nz - 1);
-        let k_max = ((max_z / domain.dz) as usize).max(0).min(domain.nz - 1);
+        // Convert to grid indices with safety bounds
+        let i_min = ((min_x / domain.dx).floor() as i32).max(0).min(domain.nx as i32 - 1) as usize;
+        let i_max = ((max_x / domain.dx).ceil() as i32).max(0).min(domain.nx as i32 - 1) as usize;
+        let j_min = ((min_y / domain.dy).floor() as i32).max(0).min(domain.ny as i32 - 1) as usize;
+        let j_max = ((max_y / domain.dy).ceil() as i32).max(0).min(domain.ny as i32 - 1) as usize;
+        let k_min = ((min_z / domain.dz).floor() as i32).max(0).min(domain.nz as i32 - 1) as usize;
+        let k_max = ((max_z / domain.dz).ceil() as i32).max(0).min(domain.nz as i32 - 1) as usize;
         
+        // Sample each voxel in the bounding box
         for i in i_min..=i_max {
             for j in j_min..=j_max {
                 for k in k_min..=k_max {
+                    // Test voxel center point
                     let point = Point3::new(
-                        i as f32 * domain.dx,
-                        j as f32 * domain.dy,
-                        k as f32 * domain.dz,
+                        (i as f32 + 0.5) * domain.dx,
+                        (j as f32 + 0.5) * domain.dy,
+                        (k as f32 + 0.5) * domain.dz,
                     );
                     
-                    if Self::point_in_triangle(&point, vertices) {
+                    // Check if point is inside the triangle (with some tolerance for surface voxels)
+                    let distance = Self::point_triangle_distance(&point, vertices);
+                    let voxel_size = (domain.dx.min(domain.dy).min(domain.dz)) * 0.5;
+                    
+                    if distance < voxel_size {
                         solid_nodes.insert((i, j, k));
                         
-                        // Mark neighboring nodes as boundary
+                        // Mark neighboring nodes as boundary candidates
                         for di in -1i32..=1 {
                             for dj in -1i32..=1 {
                                 for dk in -1i32..=1 {
                                     if di == 0 && dj == 0 && dk == 0 { continue; }
                                     
-                                    let ni = (i as i32 + di) as usize;
-                                    let nj = (j as i32 + dj) as usize;
-                                    let nk = (k as i32 + dk) as usize;
+                                    let ni = i as i32 + di;
+                                    let nj = j as i32 + dj;
+                                    let nk = k as i32 + dk;
                                     
-                                    if ni < domain.nx && nj < domain.ny && nk < domain.nz {
-                                        boundary_nodes.insert((ni, nj, nk));
+                                    if ni >= 0 && ni < domain.nx as i32 && 
+                                       nj >= 0 && nj < domain.ny as i32 && 
+                                       nk >= 0 && nk < domain.nz as i32 {
+                                        boundary_nodes.insert((ni as usize, nj as usize, nk as usize));
                                     }
                                 }
                             }
@@ -130,23 +156,49 @@ impl Geometry {
         }
     }
     
-    fn point_in_triangle(point: &Point3<f32>, triangle: &[Point3<f32>; 3]) -> bool {
-        // Simplified point-in-triangle test using barycentric coordinates
-        let v0 = triangle[2] - triangle[0];
-        let v1 = triangle[1] - triangle[0];
+    fn point_triangle_distance(point: &Point3<f32>, triangle: &[Point3<f32>; 3]) -> f32 {
+        // Compute vectors
+        let v0 = triangle[1] - triangle[0];
+        let v1 = triangle[2] - triangle[0];
         let v2 = point - triangle[0];
         
+        // Compute dot products
         let dot00 = v0.dot(&v0);
         let dot01 = v0.dot(&v1);
         let dot02 = v0.dot(&v2);
         let dot11 = v1.dot(&v1);
         let dot12 = v1.dot(&v2);
         
+        // Compute barycentric coordinates
         let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
         let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
         let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
         
-        (u >= 0.0) && (v >= 0.0) && (u + v <= 1.0)
+        if u >= 0.0 && v >= 0.0 && u + v <= 1.0 {
+            // Point is inside triangle, compute distance to plane
+            let normal = v0.cross(&v1).normalize();
+            (v2.dot(&normal)).abs()
+        } else {
+            // Point is outside triangle, find distance to closest edge/vertex
+            let d1 = Self::point_line_segment_distance(point, &triangle[0], &triangle[1]);
+            let d2 = Self::point_line_segment_distance(point, &triangle[1], &triangle[2]);
+            let d3 = Self::point_line_segment_distance(point, &triangle[2], &triangle[0]);
+            d1.min(d2).min(d3)
+        }
+    }
+    
+    fn point_line_segment_distance(point: &Point3<f32>, a: &Point3<f32>, b: &Point3<f32>) -> f32 {
+        let ab = b - a;
+        let ap = point - a;
+        let ab_len_sq = ab.dot(&ab);
+        
+        if ab_len_sq == 0.0 {
+            return ap.magnitude();
+        }
+        
+        let t = (ap.dot(&ab) / ab_len_sq).clamp(0.0, 1.0);
+        let projection = a + ab * t;
+        (point - projection).magnitude()
     }
     
     pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {

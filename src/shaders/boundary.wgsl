@@ -108,34 +108,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         case 1u: { // Solid node - bounce-back
             for (var i = 0u; i < Q; i++) {
                 let opposite = OPPOSITE[i];
-                temp[idx].f[i] = lattice[idx].f[opposite];
+                lattice[idx].f[i] = lattice[idx].f[opposite];
             }
-        }
-        case 2u: { // Inlet - prescribed velocity
-            let inlet_vel = array<f32, 3>(
-                config.inlet_velocity.x,
-                config.inlet_velocity.y,
-                config.inlet_velocity.z
-            );
-            
-            for (var i = 0u; i < Q; i++) {
-                lattice[idx].f[i] = equilibrium_distribution(i, config.density, inlet_vel);
-            }
-            
-            lattice[idx].density = config.density;
-            lattice[idx].velocity = inlet_vel;
+            lattice[idx].velocity = array<f32, 3>(0.0, 0.0, 0.0);
+            lattice[idx].density = 1.0;
         }
         case 3u: { // Outlet - zero gradient (Neumann BC)
-            // Copy from neighboring fluid node
+            // Copy from neighboring fluid node (extrapolation)
             if (x > 0u) {
                 let neighbor_idx = (x - 1u) + y * config.domain_size.x + z * config.domain_size.x * config.domain_size.y;
                 if (lattice[neighbor_idx].node_type == 0u) {
-                    lattice[idx].f = lattice[neighbor_idx].f;
+                    for (var i = 0u; i < Q; i++) {
+                        lattice[idx].f[i] = lattice[neighbor_idx].f[i];
+                    }
                     lattice[idx].density = lattice[neighbor_idx].density;
                     lattice[idx].velocity = lattice[neighbor_idx].velocity;
                 }
             }
         }
-        default: {} // Fluid nodes - no special treatment needed
+        default: {} // Fluid and inlet nodes - no modification needed (handled in collision)
     }
 }

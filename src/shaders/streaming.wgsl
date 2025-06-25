@@ -51,13 +51,15 @@ const VELOCITIES = array<array<i32, 3>, 27>(
     array<i32, 3>(-1, -1, -1),  // 26
 );
 
-fn get_neighbor_index(x: u32, y: u32, z: u32, direction: u32) -> u32 {
+fn get_source_index(x: u32, y: u32, z: u32, direction: u32) -> u32 {
+    // For pull-based streaming, we need to find where f_i came FROM
+    // If f_i streams from x-c_i to x, then to get f_i at x, we pull from x-c_i
     let c = VELOCITIES[direction];
-    let nx = i32(x) + c[0];
-    let ny = i32(y) + c[1];
-    let nz = i32(z) + c[2];
+    let nx = i32(x) - c[0];  // Note: MINUS c_i (opposite direction)
+    let ny = i32(y) - c[1];
+    let nz = i32(z) - c[2];
     
-    // Periodic boundary conditions or bounce-back
+    // Handle boundary conditions
     var new_x = nx;
     var new_y = ny;
     var new_z = nz;
@@ -90,9 +92,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     dest[idx].node_type = source[idx].node_type;
     dest[idx].padding = source[idx].padding;
     
-    // Streaming step: f_i(x + c_i, t + 1) = f_i(x, t)
+    // Streaming step: f_i(x, t + 1) = f_i(x - c_i, t) (pull-based)
     for (var i = 0u; i < 27u; i++) {
-        let neighbor_idx = get_neighbor_index(x, y, z, i);
-        dest[idx].f[i] = source[neighbor_idx].f[i];
+        let source_idx = get_source_index(x, y, z, i);
+        dest[idx].f[i] = source[source_idx].f[i];
     }
 }
