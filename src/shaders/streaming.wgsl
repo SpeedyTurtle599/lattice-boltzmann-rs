@@ -9,13 +9,11 @@ struct LatticePoint {
 }
 
 struct Config {
-    nx: u32,
-    ny: u32,
-    nz: u32,
-    tau: f32,
-    inlet_velocity: array<f32, 4>,
-    density: f32,
-    padding: array<f32, 3>,
+    domain_size: vec4<u32>,         // nx, ny, nz, padding - 16 bytes aligned
+    tau: f32,                       // 4 bytes
+    density: f32,                   // 4 bytes  
+    padding1: vec2<f32>,            // 8 bytes - total 16 bytes for this group
+    inlet_velocity: vec4<f32>,      // 16 bytes aligned
 }
 
 @group(0) @binding(0) var<storage, read> source: array<LatticePoint>;
@@ -65,13 +63,13 @@ fn get_neighbor_index(x: u32, y: u32, z: u32, direction: u32) -> u32 {
     var new_z = nz;
     
     if (new_x < 0) { new_x = 0; }
-    if (new_x >= i32(config.nx)) { new_x = i32(config.nx) - 1; }
+    if (new_x >= i32(config.domain_size.x)) { new_x = i32(config.domain_size.x) - 1; }
     if (new_y < 0) { new_y = 0; }
-    if (new_y >= i32(config.ny)) { new_y = i32(config.ny) - 1; }
+    if (new_y >= i32(config.domain_size.y)) { new_y = i32(config.domain_size.y) - 1; }
     if (new_z < 0) { new_z = 0; }
-    if (new_z >= i32(config.nz)) { new_z = i32(config.nz) - 1; }
+    if (new_z >= i32(config.domain_size.z)) { new_z = i32(config.domain_size.z) - 1; }
     
-    return u32(new_x) + u32(new_y) * config.nx + u32(new_z) * config.nx * config.ny;
+    return u32(new_x) + u32(new_y) * config.domain_size.x + u32(new_z) * config.domain_size.x * config.domain_size.y;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -80,11 +78,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let y = global_id.y;
     let z = global_id.z;
     
-    if (x >= config.nx || y >= config.ny || z >= config.nz) {
+    if (x >= config.domain_size.x || y >= config.domain_size.y || z >= config.domain_size.z) {
         return;
     }
     
-    let idx = x + y * config.nx + z * config.nx * config.ny;
+    let idx = x + y * config.domain_size.x + z * config.domain_size.x * config.domain_size.y;
     
     // Copy node properties
     dest[idx].density = source[idx].density;

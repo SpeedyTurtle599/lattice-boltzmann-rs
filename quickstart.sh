@@ -28,12 +28,13 @@ if [ $? -ne 0 ]; then
 fi
 
 # Create output directory
+echo "Creating output directory..."
 mkdir -p output
 
 # Run the simulation
 echo "Running example simulation..."
 echo "This may take a few minutes depending on your GPU..."
-./target/release/lattice-boltzmann-rs example_config.json example_cylinder.stl
+RUST_LOG=info ./target/release/lattice-boltzmann-rs example_config.json example_cylinder.stl
 
 if [ $? -eq 0 ]; then
     echo

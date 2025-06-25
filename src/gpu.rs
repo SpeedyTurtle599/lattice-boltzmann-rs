@@ -79,18 +79,16 @@ impl GPUContext {
         
         // Configuration buffer
         let config_data = GPUConfig {
-            nx,
-            ny,
-            nz,
+            domain_size: [nx, ny, nz, 0], // Fourth element is padding
             tau: config.calculate_tau(),
+            density: config.physics.density,
+            padding1: [0.0, 0.0],
             inlet_velocity: [
                 config.physics.inlet_velocity[0],
                 config.physics.inlet_velocity[1],
                 config.physics.inlet_velocity[2],
                 0.0, // padding
             ],
-            density: config.physics.density,
-            _padding: [0.0; 3],
         };
         
         let config_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -115,9 +113,11 @@ impl GPUContext {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/boundary.wgsl").into()),
         });
         
-        // Create bind group layouts
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Compute Bind Group Layout"),
+        // Create bind group layouts for different shader types
+        
+        // Layout for collision and boundary shaders (both buffers read-write)
+        let collision_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Collision Bind Group Layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -152,17 +152,60 @@ impl GPUContext {
             ],
         });
         
+        // Layout for streaming shader (first buffer read-only, second read-write)
+        let streaming_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Streaming Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        
         // Create pipeline layouts
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Compute Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
+        let collision_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Collision Pipeline Layout"),
+            bind_group_layouts: &[&collision_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        let streaming_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Streaming Pipeline Layout"),
+            bind_group_layouts: &[&streaming_bind_group_layout],
             push_constant_ranges: &[],
         });
         
         // Create compute pipelines
         let collision_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Collision Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&collision_pipeline_layout),
             module: &collision_shader,
             entry_point: Some("main"),
             compilation_options: Default::default(),
@@ -171,7 +214,7 @@ impl GPUContext {
         
         let streaming_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Streaming Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&streaming_pipeline_layout),
             module: &streaming_shader,
             entry_point: Some("main"),
             compilation_options: Default::default(),
@@ -180,7 +223,7 @@ impl GPUContext {
         
         let boundary_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Boundary Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&collision_pipeline_layout),
             module: &boundary_shader,
             entry_point: Some("main"),
             compilation_options: Default::default(),
@@ -190,7 +233,7 @@ impl GPUContext {
         // Create bind groups
         let collision_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Collision Bind Group"),
-            layout: &bind_group_layout,
+            layout: &collision_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -209,7 +252,7 @@ impl GPUContext {
         
         let streaming_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Streaming Bind Group"),
-            layout: &bind_group_layout,
+            layout: &streaming_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -228,7 +271,7 @@ impl GPUContext {
         
         let boundary_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Boundary Bind Group"),
-            layout: &bind_group_layout,
+            layout: &collision_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -353,11 +396,9 @@ impl GPUContext {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GPUConfig {
-    nx: u32,
-    ny: u32,
-    nz: u32,
-    tau: f32,
-    inlet_velocity: [f32; 4], // 4th component for padding
-    density: f32,
-    _padding: [f32; 3],
+    domain_size: [u32; 4],      // nx, ny, nz, padding - 16 bytes aligned
+    tau: f32,                   // 4 bytes
+    density: f32,               // 4 bytes
+    padding1: [f32; 2],         // 8 bytes - total 16 bytes for this group
+    inlet_velocity: [f32; 4],   // 16 bytes aligned
 }

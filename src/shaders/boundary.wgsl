@@ -9,13 +9,11 @@ struct LatticePoint {
 }
 
 struct Config {
-    nx: u32,
-    ny: u32,
-    nz: u32,
-    tau: f32,
-    inlet_velocity: array<f32, 4>,
-    density: f32,
-    padding: array<f32, 3>,
+    domain_size: vec4<u32>,         // nx, ny, nz, padding - 16 bytes aligned
+    tau: f32,                       // 4 bytes
+    density: f32,                   // 4 bytes  
+    padding1: vec2<f32>,            // 8 bytes - total 16 bytes for this group
+    inlet_velocity: vec4<f32>,      // 16 bytes aligned
 }
 
 @group(0) @binding(0) var<storage, read_write> lattice: array<LatticePoint>;
@@ -98,11 +96,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let y = global_id.y;
     let z = global_id.z;
     
-    if (x >= config.nx || y >= config.ny || z >= config.nz) {
+    if (x >= config.domain_size.x || y >= config.domain_size.y || z >= config.domain_size.z) {
         return;
     }
     
-    let idx = x + y * config.nx + z * config.nx * config.ny;
+    let idx = x + y * config.domain_size.x + z * config.domain_size.x * config.domain_size.y;
     let node_type = lattice[idx].node_type;
     
     // Handle boundary conditions based on node type
@@ -115,9 +113,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         case 2u: { // Inlet - prescribed velocity
             let inlet_vel = array<f32, 3>(
-                config.inlet_velocity[0],
-                config.inlet_velocity[1],
-                config.inlet_velocity[2]
+                config.inlet_velocity.x,
+                config.inlet_velocity.y,
+                config.inlet_velocity.z
             );
             
             for (var i = 0u; i < Q; i++) {
@@ -130,7 +128,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         case 3u: { // Outlet - zero gradient (Neumann BC)
             // Copy from neighboring fluid node
             if (x > 0u) {
-                let neighbor_idx = (x - 1u) + y * config.nx + z * config.nx * config.ny;
+                let neighbor_idx = (x - 1u) + y * config.domain_size.x + z * config.domain_size.x * config.domain_size.y;
                 if (lattice[neighbor_idx].node_type == 0u) {
                     lattice[idx].f = lattice[neighbor_idx].f;
                     lattice[idx].density = lattice[neighbor_idx].density;
