@@ -1,0 +1,202 @@
+use anyhow::Result;
+use std::fs::File;
+use std::io::Write;
+use crate::{config::Config, lattice::LatticePoint, Float};
+
+pub struct VTKWriter {
+    config: Config,
+}
+
+impl VTKWriter {
+    pub fn new(config: &Config) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+    
+    pub fn write(&self, filename: &str, lattice: &[LatticePoint], iteration: usize) -> Result<()> {
+        let nx = self.config.domain.nx;
+        let ny = self.config.domain.ny;
+        let nz = self.config.domain.nz;
+        
+        let mut file = File::create(filename)?;
+        
+        // Write VTK header for structured grid
+        writeln!(file, "# vtk DataFile Version 3.0")?;
+        writeln!(file, "LBM Solution - Iteration {}", iteration)?;
+        writeln!(file, "ASCII")?;
+        writeln!(file, "DATASET STRUCTURED_GRID")?;
+        writeln!(file, "DIMENSIONS {} {} {}", nx, ny, nz)?;
+        
+        // Write points
+        writeln!(file, "POINTS {} float", nx * ny * nz)?;
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let x = i as Float * self.config.domain.dx;
+                    let y = j as Float * self.config.domain.dy;
+                    let z = k as Float * self.config.domain.dz;
+                    writeln!(file, "{} {} {}", x, y, z)?;
+                }
+            }
+        }
+        
+        // Write point data
+        writeln!(file, "POINT_DATA {}", nx * ny * nz)?;
+        
+        // Density
+        writeln!(file, "SCALARS Density float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for point in lattice {
+            writeln!(file, "{}", point.density)?;
+        }
+        
+        // Velocity
+        writeln!(file, "VECTORS Velocity float")?;
+        for point in lattice {
+            writeln!(file, "{} {} {}", point.velocity[0], point.velocity[1], point.velocity[2])?;
+        }
+        
+        // Velocity magnitude
+        writeln!(file, "SCALARS VelocityMagnitude float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for point in lattice {
+            let vel_mag = (point.velocity[0].powi(2) + 
+                          point.velocity[1].powi(2) + 
+                          point.velocity[2].powi(2)).sqrt();
+            writeln!(file, "{}", vel_mag)?;
+        }
+        
+        // Node type
+        writeln!(file, "SCALARS NodeType float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for point in lattice {
+            writeln!(file, "{}", point.node_type as f32)?;
+        }
+        
+        // Pressure (from density)
+        writeln!(file, "SCALARS Pressure float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for point in lattice {
+            let pressure = (point.density - self.config.physics.density) / 3.0; // cs^2 = 1/3
+            writeln!(file, "{}", pressure)?;
+        }
+        
+        // Vorticity
+        let vorticity = self.calculate_vorticity(lattice);
+        writeln!(file, "VECTORS Vorticity float")?;
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let idx = i + j * nx + k * nx * ny;
+                    writeln!(file, "{} {} {}", 
+                            vorticity[idx * 3], 
+                            vorticity[idx * 3 + 1], 
+                            vorticity[idx * 3 + 2])?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn calculate_vorticity(&self, lattice: &[LatticePoint]) -> Vec<Float> {
+        let nx = self.config.domain.nx;
+        let ny = self.config.domain.ny;
+        let nz = self.config.domain.nz;
+        let dx = self.config.domain.dx;
+        let dy = self.config.domain.dy;
+        let dz = self.config.domain.dz;
+        
+        let mut vorticity = vec![0.0; lattice.len() * 3];
+        
+        for k in 1..nz-1 {
+            for j in 1..ny-1 {
+                for i in 1..nx-1 {
+                    let idx = i + j * nx + k * nx * ny;
+                    
+                    // Calculate velocity gradients using central differences
+                    let idx_xp = (i + 1) + j * nx + k * nx * ny;
+                    let idx_xm = (i - 1) + j * nx + k * nx * ny;
+                    let idx_yp = i + (j + 1) * nx + k * nx * ny;
+                    let idx_ym = i + (j - 1) * nx + k * nx * ny;
+                    let idx_zp = i + j * nx + (k + 1) * nx * ny;
+                    let idx_zm = i + j * nx + (k - 1) * nx * ny;
+                    
+                    // Only calculate for fluid nodes
+                    if lattice[idx].node_type == 0 {
+                        // dw/dy - dv/dz (x-component of vorticity)
+                        let dwdy = (lattice[idx_yp].velocity[2] - lattice[idx_ym].velocity[2]) / (2.0 * dy);
+                        let dvdz = (lattice[idx_zp].velocity[1] - lattice[idx_zm].velocity[1]) / (2.0 * dz);
+                        vorticity[idx * 3] = dwdy - dvdz;
+                        
+                        // du/dz - dw/dx (y-component of vorticity)
+                        let dudz = (lattice[idx_zp].velocity[0] - lattice[idx_zm].velocity[0]) / (2.0 * dz);
+                        let dwdx = (lattice[idx_xp].velocity[2] - lattice[idx_xm].velocity[2]) / (2.0 * dx);
+                        vorticity[idx * 3 + 1] = dudz - dwdx;
+                        
+                        // dv/dx - du/dy (z-component of vorticity)
+                        let dvdx = (lattice[idx_xp].velocity[1] - lattice[idx_xm].velocity[1]) / (2.0 * dx);
+                        let dudy = (lattice[idx_yp].velocity[0] - lattice[idx_ym].velocity[0]) / (2.0 * dy);
+                        vorticity[idx * 3 + 2] = dvdx - dudy;
+                    }
+                }
+            }
+        }
+        
+        vorticity
+    }
+    
+    pub fn write_geometry(&self, filename: &str, geometry: &crate::geometry::Geometry) -> Result<()> {
+        let nx = self.config.domain.nx;
+        let ny = self.config.domain.ny;
+        let nz = self.config.domain.nz;
+        
+        let mut file = File::create(filename)?;
+        
+        // Write VTK header for structured grid
+        writeln!(file, "# vtk DataFile Version 3.0")?;
+        writeln!(file, "LBM Geometry")?;
+        writeln!(file, "ASCII")?;
+        writeln!(file, "DATASET STRUCTURED_GRID")?;
+        writeln!(file, "DIMENSIONS {} {} {}", nx, ny, nz)?;
+        
+        // Write points
+        writeln!(file, "POINTS {} float", nx * ny * nz)?;
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let x = i as Float * self.config.domain.dx;
+                    let y = j as Float * self.config.domain.dy;
+                    let z = k as Float * self.config.domain.dz;
+                    writeln!(file, "{} {} {}", x, y, z)?;
+                }
+            }
+        }
+        
+        // Write point data
+        writeln!(file, "POINT_DATA {}", nx * ny * nz)?;
+        
+        // Node type
+        writeln!(file, "SCALARS NodeType float 1")?;
+        writeln!(file, "LOOKUP_TABLE default")?;
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let node_type = if geometry.is_solid(i, j, k) {
+                        1.0
+                    } else if geometry.is_inlet(i, j, k) {
+                        2.0
+                    } else if geometry.is_outlet(i, j, k) {
+                        3.0
+                    } else {
+                        0.0
+                    };
+                    writeln!(file, "{}", node_type)?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}

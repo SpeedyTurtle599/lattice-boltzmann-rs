@@ -1,0 +1,100 @@
+// D3Q27 Lattice-Boltzmann streaming shader
+
+struct LatticePoint {
+    f: array<f32, 27>,           // Distribution functions
+    density: f32,                // Macroscopic density
+    velocity: array<f32, 3>,     // Macroscopic velocity
+    node_type: u32,              // Node type (0: fluid, 1: solid, 2: inlet, 3: outlet)
+    padding: array<u32, 3>,      // Padding for alignment
+}
+
+struct Config {
+    nx: u32,
+    ny: u32,
+    nz: u32,
+    tau: f32,
+    inlet_velocity: array<f32, 4>,
+    density: f32,
+    padding: array<f32, 3>,
+}
+
+@group(0) @binding(0) var<storage, read> source: array<LatticePoint>;
+@group(0) @binding(1) var<storage, read_write> dest: array<LatticePoint>;
+@group(0) @binding(2) var<uniform> config: Config;
+
+// D3Q27 velocities
+const VELOCITIES = array<array<i32, 3>, 27>(
+    array<i32, 3>(0, 0, 0),     // 0
+    array<i32, 3>(1, 0, 0),     // 1
+    array<i32, 3>(-1, 0, 0),    // 2
+    array<i32, 3>(0, 1, 0),     // 3
+    array<i32, 3>(0, -1, 0),    // 4
+    array<i32, 3>(0, 0, 1),     // 5
+    array<i32, 3>(0, 0, -1),    // 6
+    array<i32, 3>(1, 1, 0),     // 7
+    array<i32, 3>(1, -1, 0),    // 8
+    array<i32, 3>(-1, 1, 0),    // 9
+    array<i32, 3>(-1, -1, 0),   // 10
+    array<i32, 3>(1, 0, 1),     // 11
+    array<i32, 3>(1, 0, -1),    // 12
+    array<i32, 3>(-1, 0, 1),    // 13
+    array<i32, 3>(-1, 0, -1),   // 14
+    array<i32, 3>(0, 1, 1),     // 15
+    array<i32, 3>(0, 1, -1),    // 16
+    array<i32, 3>(0, -1, 1),    // 17
+    array<i32, 3>(0, -1, -1),   // 18
+    array<i32, 3>(1, 1, 1),     // 19
+    array<i32, 3>(1, 1, -1),    // 20
+    array<i32, 3>(1, -1, 1),    // 21
+    array<i32, 3>(1, -1, -1),   // 22
+    array<i32, 3>(-1, 1, 1),    // 23
+    array<i32, 3>(-1, 1, -1),   // 24
+    array<i32, 3>(-1, -1, 1),   // 25
+    array<i32, 3>(-1, -1, -1),  // 26
+);
+
+fn get_neighbor_index(x: u32, y: u32, z: u32, direction: u32) -> u32 {
+    let c = VELOCITIES[direction];
+    let nx = i32(x) + c[0];
+    let ny = i32(y) + c[1];
+    let nz = i32(z) + c[2];
+    
+    // Periodic boundary conditions or bounce-back
+    var new_x = nx;
+    var new_y = ny;
+    var new_z = nz;
+    
+    if (new_x < 0) { new_x = 0; }
+    if (new_x >= i32(config.nx)) { new_x = i32(config.nx) - 1; }
+    if (new_y < 0) { new_y = 0; }
+    if (new_y >= i32(config.ny)) { new_y = i32(config.ny) - 1; }
+    if (new_z < 0) { new_z = 0; }
+    if (new_z >= i32(config.nz)) { new_z = i32(config.nz) - 1; }
+    
+    return u32(new_x) + u32(new_y) * config.nx + u32(new_z) * config.nx * config.ny;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let x = global_id.x;
+    let y = global_id.y;
+    let z = global_id.z;
+    
+    if (x >= config.nx || y >= config.ny || z >= config.nz) {
+        return;
+    }
+    
+    let idx = x + y * config.nx + z * config.nx * config.ny;
+    
+    // Copy node properties
+    dest[idx].density = source[idx].density;
+    dest[idx].velocity = source[idx].velocity;
+    dest[idx].node_type = source[idx].node_type;
+    dest[idx].padding = source[idx].padding;
+    
+    // Streaming step: f_i(x + c_i, t + 1) = f_i(x, t)
+    for (var i = 0u; i < 27u; i++) {
+        let neighbor_idx = get_neighbor_index(x, y, z, i);
+        dest[idx].f[i] = source[neighbor_idx].f[i];
+    }
+}
