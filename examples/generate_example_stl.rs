@@ -9,7 +9,7 @@ pub fn generate_cylinder_stl(filename: &str, radius: f32, height: f32, center: [
     // Write STL header
     writeln!(file, "solid cylinder")?;
     
-    let num_segments = 20;
+    let num_segments = 50;
     let angle_step = 2.0 * std::f32::consts::PI / num_segments as f32;
     
     // Generate cylinder surface
@@ -76,8 +76,8 @@ pub fn generate_cylinder_stl(filename: &str, radius: f32, height: f32, center: [
 
 fn main() -> Result<()> {
     // Generate an example cylinder STL file
-    // Domain is 80×50×50 with 0.005m spacing = 0.4m × 0.25m × 0.25m
-    // Position cylinder at center of domain: [0.2, 0.125, 0.125]
+    // Domain is nx*ny*nz = 100*50*50, dx*dy*dz = 0.001m*0.001m*0.001m
+    // Position cylinder at center of domain: [0.2, 0.125, 0.125]m
     // Cylinder: radius 0.06m (12 grid cells), height 0.20m (40 grid cells) 
     generate_cylinder_stl("example_cylinder.stl", 0.06, 0.20, [0.2, 0.125, 0.125])?;
     
