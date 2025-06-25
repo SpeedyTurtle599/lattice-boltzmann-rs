@@ -49,12 +49,20 @@ impl GPUContext {
         info!("GPU Adapter Selected: {} ({:?}, {:?}, {:?})", 
               adapter_info.name, adapter_info.vendor, adapter_info.device_type, adapter_info.backend);
         
+        // Get adapter limits and request high performance limits
+        let adapter_limits = adapter.limits();
+        let high_limits = wgpu::Limits {
+            max_buffer_size: adapter_limits.max_buffer_size,
+            max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size, 
+            ..adapter_limits
+        };
+        
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    label: None,
+                    required_limits: high_limits,
+                    label: Some("High Performance LBM Device"),
                     memory_hints: wgpu::MemoryHints::Performance,
                     ..Default::default()
                 },
