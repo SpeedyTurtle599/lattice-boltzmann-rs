@@ -1,5 +1,6 @@
 use anyhow::Result;
 use log::info;
+use indicatif::{ProgressBar, ProgressStyle};
 use crate::{
     config::Config,
     geometry::Geometry,
@@ -14,6 +15,7 @@ pub struct LBMSolver {
     gpu_context: GPUContext,
     lattice: Vec<LatticePoint>,
     iteration: usize,
+    vtk_writer: VTKWriter,
 }
 
 impl LBMSolver {
@@ -82,12 +84,16 @@ impl LBMSolver {
         // Write geometry file for visualization debugging
         Self::write_geometry_file(&geometry, &config)?;
         
+        // Initialize VTK writer
+        let vtk_writer = VTKWriter::new(&config);
+        
         Ok(Self {
             config,
             geometry,
             gpu_context,
             lattice,
             iteration: 0,
+            vtk_writer,
         })
     }
     
@@ -96,6 +102,14 @@ impl LBMSolver {
         
         // Create output directory
         std::fs::create_dir_all(&self.config.output.output_directory)?;
+        
+        // Create progress bar
+        let pb = ProgressBar::new(self.config.simulation.max_iterations as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
+            .unwrap()
+            .progress_chars("#>-"));
+        pb.set_message("LBM Simulation");
         
         // Write initial state
         if self.iteration % self.config.output.output_frequency == 0 {
@@ -109,18 +123,29 @@ impl LBMSolver {
             self.gpu_context.step();
             
             self.iteration += 1;
+            pb.set_position(self.iteration as u64);
             
             // Output results at specified frequency
             if self.iteration % self.config.output.output_frequency == 0 {
+                pb.set_message(format!("LBM Simulation - Writing output {}", self.iteration));
                 self.write_output().await?;
                 
                 // Check convergence (simplified)
                 converged = self.check_convergence().await?;
                 
-                info!("Iteration {}: {}", self.iteration, 
-                      if converged { "Converged" } else { "Continuing" });
+                let status = if converged { "Converged" } else { "Continuing" };
+                pb.set_message(format!("LBM Simulation - Iteration {}: {}", self.iteration, status));
+                info!("Iteration {}: {}", self.iteration, status);
             }
         }
+        
+        pb.finish_with_message(format!("LBM Simulation completed - {} iterations", self.iteration));
+        
+        // Write ParaView collection file for time series
+        let collection_filename = format!("{}/simulation.pvd", self.config.output.output_directory);
+        self.vtk_writer.write_collection(&collection_filename)?;
+        info!("Wrote ParaView collection file: {}", collection_filename);
+        info!("To view time evolution in ParaView, open the .pvd file instead of individual .vtk files");
         
         if converged {
             info!("Simulation converged after {} iterations", self.iteration);
@@ -175,8 +200,7 @@ impl LBMSolver {
                               self.iteration,
                               self.config.output.output_format);
         
-        let vtk_writer = VTKWriter::new(&self.config);
-        vtk_writer.write(&filename, &self.lattice, self.iteration)?;
+        self.vtk_writer.write(&filename, &self.lattice, self.iteration)?;
         
         info!("Wrote output file: {}", filename);
         

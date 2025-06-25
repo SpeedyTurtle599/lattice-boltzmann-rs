@@ -5,25 +5,33 @@ use crate::{config::Config, lattice::LatticePoint, Float};
 
 pub struct VTKWriter {
     config: Config,
+    collection_entries: Vec<(usize, f64, String)>, // (iteration, time, filename)
 }
 
 impl VTKWriter {
     pub fn new(config: &Config) -> Self {
         Self {
             config: config.clone(),
+            collection_entries: Vec::new(),
         }
     }
     
-    pub fn write(&self, filename: &str, lattice: &[LatticePoint], iteration: usize) -> Result<()> {
+    pub fn write(&mut self, filename: &str, lattice: &[LatticePoint], iteration: usize) -> Result<()> {
         let nx = self.config.domain.nx;
         let ny = self.config.domain.ny;
         let nz = self.config.domain.nz;
         
         let mut file = File::create(filename)?;
         
+        // Calculate physical time (assuming unit time step for now)
+        let time = iteration as f64;
+        
+        // Track this file for the collection
+        self.collection_entries.push((iteration, time, filename.to_string()));
+        
         // Write VTK header for structured grid
         writeln!(file, "# vtk DataFile Version 3.0")?;
-        writeln!(file, "LBM Solution - Iteration {}", iteration)?;
+        writeln!(file, "LBM Solution - Iteration {} Time {:.3}", iteration, time)?;
         writeln!(file, "ASCII")?;
         writeln!(file, "DATASET STRUCTURED_GRID")?;
         writeln!(file, "DIMENSIONS {} {} {}", nx, ny, nz)?;
@@ -45,37 +53,37 @@ impl VTKWriter {
         writeln!(file, "POINT_DATA {}", nx * ny * nz)?;
         
         // Density
-        writeln!(file, "SCALARS Density float 1")?;
+        writeln!(file, "SCALARS Density float")?;
         writeln!(file, "LOOKUP_TABLE default")?;
         for point in lattice {
-            writeln!(file, "{}", point.density)?;
+            writeln!(file, "{:.6}", point.density)?;
         }
         
         // Velocity
         writeln!(file, "VECTORS Velocity float")?;
         for point in lattice {
-            writeln!(file, "{} {} {}", point.velocity[0], point.velocity[1], point.velocity[2])?;
+            writeln!(file, "{:.6} {:.6} {:.6}", point.velocity[0], point.velocity[1], point.velocity[2])?;
         }
         
         // Velocity magnitude
-        writeln!(file, "SCALARS VelocityMagnitude float 1")?;
+        writeln!(file, "SCALARS VelocityMagnitude float")?;
         writeln!(file, "LOOKUP_TABLE default")?;
         for point in lattice {
             let vel_mag = (point.velocity[0].powi(2) + 
                           point.velocity[1].powi(2) + 
                           point.velocity[2].powi(2)).sqrt();
-            writeln!(file, "{}", vel_mag)?;
+            writeln!(file, "{:.6}", vel_mag)?;
         }
         
         // Node type
-        writeln!(file, "SCALARS NodeType float 1")?;
+        writeln!(file, "SCALARS NodeType float")?;
         writeln!(file, "LOOKUP_TABLE default")?;
         for point in lattice {
-            writeln!(file, "{}", point.node_type as f32)?;
+            writeln!(file, "{:.1}", point.node_type as f32)?;
         }
         
         // Geometry indicator (useful for visualizing solid regions)
-        writeln!(file, "SCALARS GeometryType float 1")?;
+        writeln!(file, "SCALARS GeometryType float")?;
         writeln!(file, "LOOKUP_TABLE default")?;
         for point in lattice {
             let value = match point.node_type {
@@ -85,15 +93,15 @@ impl VTKWriter {
                 3 => 0.25,  // Outlet - yellow
                 _ => -1.0,  // Unknown - black
             };
-            writeln!(file, "{}", value)?;
+            writeln!(file, "{:.2}", value)?;
         }
         
         // Pressure (from density)
-        writeln!(file, "SCALARS Pressure float 1")?;
+        writeln!(file, "SCALARS Pressure float")?;
         writeln!(file, "LOOKUP_TABLE default")?;
         for point in lattice {
             let pressure = (point.density - self.config.physics.density) / 3.0; // cs^2 = 1/3
-            writeln!(file, "{}", pressure)?;
+            writeln!(file, "{:.6}", pressure)?;
         }
         
         // Vorticity
@@ -103,7 +111,7 @@ impl VTKWriter {
             for j in 0..ny {
                 for i in 0..nx {
                     let idx = i + j * nx + k * nx * ny;
-                    writeln!(file, "{} {} {}", 
+                    writeln!(file, "{:.6} {:.6} {:.6}", 
                             vorticity[idx * 3], 
                             vorticity[idx * 3 + 1], 
                             vorticity[idx * 3 + 2])?;
@@ -192,7 +200,7 @@ impl VTKWriter {
         writeln!(file, "POINT_DATA {}", nx * ny * nz)?;
         
         // Node type
-        writeln!(file, "SCALARS NodeType float 1")?;
+        writeln!(file, "SCALARS NodeType float")?;
         writeln!(file, "LOOKUP_TABLE default")?;
         for k in 0..nz {
             for j in 0..ny {
@@ -206,11 +214,40 @@ impl VTKWriter {
                     } else {
                         0.0
                     };
-                    writeln!(file, "{}", node_type)?;
+                    writeln!(file, "{:.1}", node_type)?;
                 }
             }
         }
         
         Ok(())
+    }
+    
+    /// Write a ParaView collection file that groups all VTK files with time information
+    pub fn write_collection(&self, collection_filename: &str) -> Result<()> {
+        let mut file = File::create(collection_filename)?;
+        
+        writeln!(file, "<?xml version=\"1.0\"?>")?;
+        writeln!(file, "<VTKFile type=\"Collection\" version=\"0.1\">")?;
+        writeln!(file, "  <Collection>")?;
+        
+        for (_iteration, time, filename) in &self.collection_entries {
+            // Extract just the filename (not the full path) for the collection
+            let basename = std::path::Path::new(filename)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(filename);
+            writeln!(file, "    <DataSet timestep=\"{:.6}\" part=\"0\" file=\"{}\"/>", 
+                     time, basename)?;
+        }
+        
+        writeln!(file, "  </Collection>")?;
+        writeln!(file, "</VTKFile>")?;
+        
+        Ok(())
+    }
+    
+    /// Get the number of files written so far
+    pub fn get_file_count(&self) -> usize {
+        self.collection_entries.len()
     }
 }

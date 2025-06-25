@@ -30,7 +30,7 @@ pub struct GPUContext {
 impl GPUContext {
     pub async fn new(config: &Config) -> Result<Self> {
         // Initialize WGPU
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
@@ -41,8 +41,7 @@ impl GPUContext {
                 force_fallback_adapter: false,
                 compatible_surface: None,
             })
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to find suitable adapter"))?;
+            .await?;
         
         let (device, queue) = adapter
             .request_device(
@@ -51,8 +50,8 @@ impl GPUContext {
                     required_limits: wgpu::Limits::default(),
                     label: None,
                     memory_hints: wgpu::MemoryHints::Performance,
+                    ..Default::default()
                 },
-                None,
             )
             .await?;
         
@@ -334,7 +333,7 @@ impl GPUContext {
             let _ = sender.send(result);
         });
         
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
         receiver.await??;
         
         let data = buffer_slice.get_mapped_range();
@@ -399,7 +398,7 @@ impl GPUContext {
         self.queue.submit(std::iter::once(encoder.finish()));
         
         // Wait for GPU operations to complete this time step
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
     }
 }
 

@@ -149,7 +149,7 @@ impl Geometry {
                     // Mark as solid if majority of sample points are inside
                     if inside_count > total_samples / 2 {
                         solid_nodes.insert((i, j, k));
-                        println!("Marked solid node at ({}, {}, {})", i, j, k);
+                        // println!("Marked solid node at ({}, {}, {})", i, j, k);
                         
                         // Mark neighboring nodes as boundary candidates
                         for di in -1i32..=1 {
