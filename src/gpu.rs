@@ -1,5 +1,6 @@
 use wgpu::util::DeviceExt;
 use anyhow::Result;
+use log::info;
 use crate::{config::Config, lattice::LatticePoint};
 
 pub struct GPUContext {
@@ -42,6 +43,11 @@ impl GPUContext {
                 compatible_surface: None,
             })
             .await?;
+        
+        // Log GPU information for debugging
+        let adapter_info = adapter.get_info();
+        info!("GPU Adapter Selected: {} ({:?}, {:?}, {:?})", 
+              adapter_info.name, adapter_info.vendor, adapter_info.device_type, adapter_info.backend);
         
         let (device, queue) = adapter
             .request_device(
@@ -345,7 +351,9 @@ impl GPUContext {
         Ok(result)
     }
     
-    pub fn step(&self) {
+    pub fn step(&self) -> Result<()> {
+        let start_time = std::time::Instant::now();
+        
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("LBM Step Encoder"),
         });
@@ -399,6 +407,13 @@ impl GPUContext {
         
         // Wait for GPU operations to complete this time step
         let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        
+        let elapsed = start_time.elapsed();
+        if elapsed.as_millis() > 10 { // Only log if it takes more than 10ms, and use debug level
+            log::debug!("GPU step took: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+        }
+        
+        Ok(())
     }
 }
 

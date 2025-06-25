@@ -68,10 +68,10 @@ impl LBMSolver {
                     
                     lattice.push(point);
                     
-                    // Debug output for some key nodes
+                    // Debug output for some key nodes (use debug level to avoid interfering with progress bar)
                     if (i == 0 && j == config.domain.ny / 2 && k == config.domain.nz / 2) ||
                        (i == config.domain.nx / 2 && j == config.domain.ny / 2 && k == config.domain.nz / 2) {
-                        println!("Node ({}, {}, {}): type={}, vel=[{:.4}, {:.4}, {:.4}]", 
+                        log::debug!("Node ({}, {}, {}): type={}, vel=[{:.4}, {:.4}, {:.4}]", 
                                 i, j, k, node_type, velocity[0], velocity[1], velocity[2]);
                     }
                 }
@@ -103,10 +103,10 @@ impl LBMSolver {
         // Create output directory
         std::fs::create_dir_all(&self.config.output.output_directory)?;
         
-        // Create progress bar
+        // Create progress bar with cleaner format
         let pb = ProgressBar::new(self.config.simulation.max_iterations as u64);
         pb.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
+            .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta}) {msg}")
             .unwrap()
             .progress_chars("#>-"));
         pb.set_message("LBM Simulation");
@@ -120,22 +120,24 @@ impl LBMSolver {
         
         while self.iteration < self.config.simulation.max_iterations && !converged {
             // Perform one LBM step on GPU
-            self.gpu_context.step();
+            self.gpu_context.step()?;
             
             self.iteration += 1;
             pb.set_position(self.iteration as u64);
             
             // Output results at specified frequency
             if self.iteration % self.config.output.output_frequency == 0 {
-                pb.set_message(format!("LBM Simulation - Writing output {}", self.iteration));
+                pb.set_message("Writing...");
                 self.write_output().await?;
                 
                 // Check convergence (simplified)
                 converged = self.check_convergence().await?;
                 
-                let status = if converged { "Converged" } else { "Continuing" };
-                pb.set_message(format!("LBM Simulation - Iteration {}: {}", self.iteration, status));
-                info!("Iteration {}: {}", self.iteration, status);
+                if converged {
+                    pb.set_message("Converged!");
+                } else {
+                    pb.set_message("LBM Simulation");
+                }
             }
         }
         
@@ -191,7 +193,7 @@ impl LBMSolver {
             inlet_velocity_check /= inlet_count as f32;
         }
         
-        info!("Iteration {}: max_vel={:.6}, avg_vel={:.6}, inlet_vel={:.6} ({} inlet nodes)", 
+        log::debug!("Iteration {}: max_vel={:.6}, avg_vel={:.6}, inlet_vel={:.6} ({} inlet nodes)", 
               self.iteration, max_velocity, avg_velocity, inlet_velocity_check, inlet_count);
         
         // Write VTK file
@@ -202,7 +204,7 @@ impl LBMSolver {
         
         self.vtk_writer.write(&filename, &self.lattice, self.iteration)?;
         
-        info!("Wrote output file: {}", filename);
+        log::debug!("Wrote output file: {}", filename);
         
         Ok(())
     }

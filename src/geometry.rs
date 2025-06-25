@@ -1,6 +1,7 @@
 use nalgebra::Point3;
 use stl_io::read_stl;
 use std::collections::HashSet;
+use log::info;
 use crate::config::DomainConfig;
 
 #[derive(Debug, Clone)]
@@ -32,6 +33,13 @@ impl Geometry {
             Self::voxelize_triangle(&vertices, domain, &mut solid_nodes, &mut boundary_nodes);
         }
         
+        info!("Initial surface voxelization: {} solid nodes", solid_nodes.len());
+        
+        // Fill interior of closed volumes using flood fill from exterior
+        Self::fill_interior_volumes(domain, &mut solid_nodes);
+        
+        info!("After interior filling: {} solid nodes", solid_nodes.len());
+        
         // Generate fluid nodes (all nodes not solid)
         let mut fluid_nodes = HashSet::new();
         for i in 0..domain.nx {
@@ -61,7 +69,7 @@ impl Geometry {
                 
                 // Log inlet node assignment for debugging
                 if j == domain.ny / 2 && k == domain.nz / 2 {
-                    println!("Assigned inlet node at center: ({}, {}, {})", 0, j, k);
+                    log::debug!("Assigned inlet node at center: ({}, {}, {})", 0, j, k);
                 }
             }
         }
@@ -80,8 +88,8 @@ impl Geometry {
         }
         
         // Log geometry statistics
-        println!("Geometry loaded: {} solid, {} fluid, {} inlet, {} outlet nodes", 
-                solid_nodes.len(), fluid_nodes.len(), inlet_nodes.len(), outlet_nodes.len());
+        info!("Geometry loaded: {} solid, {} fluid, {} inlet, {} outlet nodes", 
+              solid_nodes.len(), fluid_nodes.len(), inlet_nodes.len(), outlet_nodes.len());
         
         Ok(Geometry {
             solid_nodes,
@@ -229,6 +237,115 @@ impl Geometry {
         (point - projection).magnitude()
     }
     
+    /// Fill interior volumes using flood-fill from exterior boundaries
+    fn fill_interior_volumes(domain: &DomainConfig, solid_nodes: &mut HashSet<(usize, usize, usize)>) {
+        // Create a 3D grid to track which nodes are reachable from the boundary
+        let mut reachable = vec![vec![vec![false; domain.nz]; domain.ny]; domain.nx];
+        let mut queue = std::collections::VecDeque::new();
+        
+        // Start flood fill from corner nodes that are definitely outside
+        let corners = [
+            (0, 0, 0),
+            (0, 0, domain.nz - 1),
+            (0, domain.ny - 1, 0),
+            (0, domain.ny - 1, domain.nz - 1),
+            (domain.nx - 1, 0, 0),
+            (domain.nx - 1, 0, domain.nz - 1),
+            (domain.nx - 1, domain.ny - 1, 0),
+            (domain.nx - 1, domain.ny - 1, domain.nz - 1),
+        ];
+        
+        for &(i, j, k) in &corners {
+            if !solid_nodes.contains(&(i, j, k)) {
+                queue.push_back((i, j, k));
+                reachable[i][j][k] = true;
+            }
+        }
+        
+        // Also add boundary edges (but not inlet/outlet faces)
+        // Y and Z boundaries only
+        for i in 0..domain.nx {
+            for k in 0..domain.nz {
+                // Bottom face (y=0)
+                if !solid_nodes.contains(&(i, 0, k)) && !reachable[i][0][k] {
+                    queue.push_back((i, 0, k));
+                    reachable[i][0][k] = true;
+                }
+                // Top face (y=ny-1)
+                if !solid_nodes.contains(&(i, domain.ny - 1, k)) && !reachable[i][domain.ny - 1][k] {
+                    queue.push_back((i, domain.ny - 1, k));
+                    reachable[i][domain.ny - 1][k] = true;
+                }
+            }
+        }
+        
+        for i in 0..domain.nx {
+            for j in 0..domain.ny {
+                // Front face (z=0)
+                if !solid_nodes.contains(&(i, j, 0)) && !reachable[i][j][0] {
+                    queue.push_back((i, j, 0));
+                    reachable[i][j][0] = true;
+                }
+                // Back face (z=nz-1)
+                if !solid_nodes.contains(&(i, j, domain.nz - 1)) && !reachable[i][j][domain.nz - 1] {
+                    queue.push_back((i, j, domain.nz - 1));
+                    reachable[i][j][domain.nz - 1] = true;
+                }
+            }
+        }
+        
+        info!("Started flood fill from {} boundary points", queue.len());
+        
+        // Flood fill algorithm
+        let mut processed = 0;
+        while let Some((i, j, k)) = queue.pop_front() {
+            processed += 1;
+            
+            // Check all 6 neighbors
+            let neighbors = [
+                (i.wrapping_sub(1), j, k),
+                (i + 1, j, k),
+                (i, j.wrapping_sub(1), k),
+                (i, j + 1, k),
+                (i, j, k.wrapping_sub(1)),
+                (i, j, k + 1),
+            ];
+            
+            for (ni, nj, nk) in neighbors {
+                // Check bounds
+                if ni >= domain.nx || nj >= domain.ny || nk >= domain.nz {
+                    continue;
+                }
+                
+                // Skip if already processed or is solid
+                if reachable[ni][nj][nk] || solid_nodes.contains(&(ni, nj, nk)) {
+                    continue;
+                }
+                
+                // Mark as reachable and add to queue
+                reachable[ni][nj][nk] = true;
+                queue.push_back((ni, nj, nk));
+            }
+        }
+        
+        info!("Flood fill processed {} nodes", processed);
+        
+        // Any node that is not reachable and not already solid should be marked as solid
+        let mut filled_count = 0;
+        for i in 0..domain.nx {
+            for j in 0..domain.ny {
+                for k in 0..domain.nz {
+                    if !reachable[i][j][k] && !solid_nodes.contains(&(i, j, k)) {
+                        solid_nodes.insert((i, j, k));
+                        filled_count += 1;
+                    }
+                }
+            }
+        }
+        
+        info!("Flood fill added {} interior solid nodes", filled_count);
+    }
+
     pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
         self.solid_nodes.contains(&(i, j, k))
     }

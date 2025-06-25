@@ -76,10 +76,13 @@ pub fn generate_cylinder_stl(filename: &str, radius: f32, height: f32, center: [
 
 fn main() -> Result<()> {
     // Generate an example cylinder STL file
-    // Cylinder: radius 0.08m (16 grid cells), height 0.4m (80 grid cells) 
-    // This ensures cylinder spans most of the z-direction and creates a visible obstruction
-    generate_cylinder_stl("example_cylinder.stl", 0.08, 0.4, [0.4, 0.25, 0.25])?;
+    // Domain is 80×50×50 with 0.005m spacing = 0.4m × 0.25m × 0.25m
+    // Position cylinder at center of domain: [0.2, 0.125, 0.125]
+    // Cylinder: radius 0.06m (12 grid cells), height 0.20m (40 grid cells) 
+    generate_cylinder_stl("example_cylinder.stl", 0.06, 0.20, [0.2, 0.125, 0.125])?;
     
     println!("Generated example_cylinder.stl");
+    println!("Cylinder positioned at center of domain [0.2, 0.125, 0.125]");
+    println!("Cylinder radius: 0.06m, height: 0.20m");
     Ok(())
 }

@@ -1,0 +1,25 @@
+{
+    "domain": {
+        "nx": 80,
+        "ny": 50,
+        "nz": 50,
+        "dx": 0.005,
+        "dy": 0.005,
+        "dz": 0.005
+    },
+    "physics": {
+        "density": 1.0,
+        "tau": 0.6,
+        "reynolds_number": 100.0,
+        "inlet_velocity": [0.1, 0.0, 0.0]
+    },
+    "simulation": {
+        "max_iterations": 25,
+        "convergence_tolerance": 1e-6
+    },
+    "output": {
+        "output_directory": "output",
+        "output_frequency": 5,
+        "output_format": "vtk"
+    }
+}
